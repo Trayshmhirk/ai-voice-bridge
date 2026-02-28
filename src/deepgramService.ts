@@ -14,6 +14,7 @@ export function createDeepgramConnection() {
     encoding: "mulaw",
     sample_rate: 8000,
     channels: 1,
+    endpointing: 500, // <-- ADD THIS: Triggers response after 500ms of silence
   });
 
   // 3. Keep track of the connection status in your terminal
