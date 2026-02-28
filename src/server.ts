@@ -10,6 +10,11 @@ dotenv.config();
 const fastify = Fastify({ logger: true });
 fastify.register(fastifyWebsocket);
 
+// Railway Health Check Route
+fastify.get("/", async (request, reply) => {
+  return { status: "PollyBot Voice Bridge is awake and healthy!" };
+});
+
 fastify.register(async function (fastify) {
   fastify.get("/twilio-stream", { websocket: true }, (connection, req) => {
     fastify.log.info("Twilio connected to WebSocket bridge");
@@ -82,13 +87,17 @@ fastify.register(async function (fastify) {
 
 const start = async () => {
   try {
+    // Railway dynamically injects the PORT variable
     const port = Number(process.env.PORT) || 3000;
-    // The host MUST be '0.0.0.0' for Railway to expose the port to the internet
+
+    // Host MUST be 0.0.0.0 for cloud providers
     await fastify.listen({ port: port, host: "0.0.0.0" });
-    console.log(`Server listening on port ${port}`);
+
+    console.log(`Server listening proudly on port ${port}`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
   }
 };
+
 start();
