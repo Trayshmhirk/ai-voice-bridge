@@ -9,7 +9,7 @@ export function createDeepgramConnection() {
 
   // 2. Create the live transcription connection
   const connection = deepgram.listen.live({
-    model: "nova-2", // <--- CHANGED: Nova-2 is required for Serbian
+    model: "general", // <--- CHANGED: Nova-2 is required for Serbian
     language: "sr", // <--- ADDED: Tells Deepgram to listen for Serbian
     smart_format: true,
     encoding: "mulaw",
