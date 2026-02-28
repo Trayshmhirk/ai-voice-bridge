@@ -41,5 +41,6 @@
     // "moduleDetection": "force",
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
-  }
+  },
+  "exclude": ["node_modules"]
 }
