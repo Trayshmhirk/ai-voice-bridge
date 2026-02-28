@@ -19,11 +19,12 @@ export async function handleN8nLogic(
         sessionId: sessionId,
       },
       {
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
       },
     );
+
+    // 👉 INJECTED LOGGING: Log the raw data object from n8n
+    console.log("[n8n Raw Response]:", JSON.stringify(response.data));
 
     // 2. Extract the response
     // NOTE: You will need to map this to the exact JSON key your n8n "Respond to Webhook" node outputs.
