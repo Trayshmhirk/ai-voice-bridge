@@ -9,7 +9,7 @@ export function createDeepgramConnection() {
 
   // 2. Create the live transcription connection
   const connection = deepgram.listen.live({
-    model: "base",
+    model: "nova-3",
     language: "sr",
     smart_format: true,
     encoding: "mulaw",
