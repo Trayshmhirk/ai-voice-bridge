@@ -82,14 +82,13 @@ fastify.register(async function (fastify) {
 
 const start = async () => {
   try {
-    await fastify.listen({
-      port: Number(process.env.PORT) || 3000,
-      host: "0.0.0.0",
-    });
+    const port = Number(process.env.PORT) || 3000;
+    // The host MUST be '0.0.0.0' for Railway to expose the port to the internet
+    await fastify.listen({ port: port, host: "0.0.0.0" });
+    console.log(`Server listening on port ${port}`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
   }
 };
-
 start();
