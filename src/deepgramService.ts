@@ -9,12 +9,13 @@ export function createDeepgramConnection() {
 
   // 2. Create the live transcription connection
   const connection = deepgram.listen.live({
-    model: "nova-3",
+    model: "nova-2", // <--- CHANGED: Nova-2 is required for Serbian
+    language: "sr", // <--- ADDED: Tells Deepgram to listen for Serbian
     smart_format: true,
     encoding: "mulaw",
     sample_rate: 8000,
     channels: 1,
-    endpointing: 500, // <-- ADD THIS: Triggers response after 500ms of silence
+    endpointing: 300, // <--- LOWERED: 300ms is faster than 500ms for voice
   });
 
   // 3. Keep track of the connection status in your terminal
