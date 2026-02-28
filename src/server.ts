@@ -57,9 +57,18 @@ fastify.register(async function (fastify) {
           streamSid || "unknown_session",
         );
 
-        // 6. Send AI text to MiniMax and pipe the returning audio directly to Twilio
+        // 👉 INJECTED LOGGING: See exactly what n8n returns
+        fastify.log.info(`[Brain] n8n returned: "${aiResponseText}"`);
+
+        // 6. Send AI text to MiniMax only if we have actual text
         if (streamSid) {
-          streamMiniMaxAudio(aiResponseText, streamSid, connection as any);
+          if (aiResponseText && aiResponseText.trim().length > 0) {
+            streamMiniMaxAudio(aiResponseText, streamSid, connection as any);
+          } else {
+            fastify.log.warn(
+              "[Voice] Skipped MiniMax because n8n returned empty text.",
+            );
+          }
         }
       }
     });
