@@ -24,6 +24,11 @@ fastify.register(async function (fastify) {
     // 1. Initialize Deepgram connection here
     const deepgramLive = createDeepgramConnection();
 
+    // Add this right after you initialize deepgramLive in server.ts
+    deepgramLive.addListener("Error", (err) => {
+      fastify.log.error("Deepgram WebSocket Error: ", err);
+    });
+
     connection.on("message", async (message: any) => {
       const data = JSON.parse(message.toString());
 
