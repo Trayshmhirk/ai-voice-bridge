@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "ts-node-dev src/server.ts",
+    "start": "ts-node src/server.ts"
   },
   "repository": {
     "type": "git",
@@ -24,6 +25,7 @@
     "axios": "^1.13.5",
     "dotenv": "^17.3.1",
     "fastify": "^5.7.4",
+    "ts-node": "^10.9.2",
     "ws": "^8.19.0"
   },
   "devDependencies": {
