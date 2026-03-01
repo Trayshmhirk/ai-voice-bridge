@@ -3,22 +3,33 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-// Custom audio converter: MiniMax 16-bit PCM to Twilio 8-bit mu-law
+/**
+ * PCM-16 (16kHz) to Twilio Mu-Law (8kHz) Converter
+ * Downsamples by AVERAGING pairs of adjacent samples instead of skipping.
+ * Averaging acts as a simple low-pass filter, preventing the aliasing
+ * distortion (muffled/buzzy sound) caused by naive sample-skipping.
+ */
 function pcm16ToMuLaw(pcm16Buffer: Buffer): Buffer {
-  const muLawBuffer = Buffer.alloc(pcm16Buffer.length / 4); // Divided by 4 (2 bytes per sample, skipping every other)
-  const VOLUME_BOOST = 1.8;
+  // Each output sample = average of 2 input samples (16kHz -> 8kHz)
+  // Each PCM16 sample = 2 bytes, so we step 4 bytes per output sample
+  const outputLength = Math.floor(pcm16Buffer.length / 4);
+  const muLawBuffer = Buffer.alloc(outputLength);
+  const VOLUME_BOOST = 1.5; // Moderate gain — avoids clipping on loud speech
 
-  for (let i = 0; i < muLawBuffer.length; i++) {
-    // We skip 4 bytes (2 samples) to go from 16kHz to 8kHz
-    let sample = pcm16Buffer.readInt16LE(i * 4);
+  for (let i = 0; i < outputLength; i++) {
+    // Average two adjacent 16kHz samples to produce one 8kHz sample
+    const sampleA = pcm16Buffer.readInt16LE(i * 4);
+    const sampleB = pcm16Buffer.readInt16LE(i * 4 + 2);
+    let sample = Math.round((sampleA + sampleB) / 2);
 
-    // Apply digital gain (boost volume)
+    // Apply digital gain
     sample = Math.round(sample * VOLUME_BOOST);
 
-    // Clip sample to prevent "crackling" distortion
+    // Clip to prevent distortion
     if (sample > 32767) sample = 32767;
     else if (sample < -32768) sample = -32768;
 
+    // Standard ITU G.711 Mu-Law compression
     let sign = (sample >> 8) & 0x80;
     if (sign !== 0) sample = -sample;
 
@@ -30,9 +41,8 @@ function pcm16ToMuLaw(pcm16Buffer: Buffer): Buffer {
       exponent--;
     }
 
-    let mantissa = (sample >> (exponent + 3)) & 0x0f;
-    let muLawByte = ~(sign | (exponent << 4) | mantissa);
-    muLawBuffer[i] = muLawByte;
+    const mantissa = (sample >> (exponent + 3)) & 0x0f;
+    muLawBuffer[i] = ~(sign | (exponent << 4) | mantissa);
   }
   return muLawBuffer;
 }
@@ -64,19 +74,18 @@ export function streamMiniMaxAudio(
   minimaxWs.on("open", () => {
     console.log("Connected to MiniMax streaming API.");
 
-    // FIX: Fire the task_start configuration immediately upon opening the connection!
     minimaxWs.send(
       JSON.stringify({
         event: "task_start",
         model: "speech-2.8-hd",
         voice_setting: {
           voice_id: "moss_audio_f2f64e31-0360-11f1-9cb8-d2836630c025",
-          speed: 1.05, // Slightly faster feels more "human" and less muffled
-          vol: 1.5, // Increase base volume from MiniMax side
-          pitch: 2, // A slight pitch increase (1) helps it stay "crisp" on 8kHz lines
+          speed: 1.0,
+          vol: 1.2, // Slight boost on the source side
+          pitch: 0, // Neutral — let the voice sound natural
         },
         audio_setting: {
-          sample_rate: 16000,
+          sample_rate: 16000, // Request 16kHz for proper downsampling to 8kHz
           bitrate: 128000,
           format: "pcm",
           channel: 1,
@@ -121,7 +130,7 @@ export function streamMiniMaxAudio(
           ? Buffer.from(response.data.audio, "hex")
           : Buffer.from(response.data.audio, "base64");
 
-        // Convert PCM-16 to Twilio's Mu-Law format
+        // Use the new 16k -> 8k converter
         const muLawBuffer = pcm16ToMuLaw(pcmBuffer);
 
         // Pipe it directly back to the active phone call
