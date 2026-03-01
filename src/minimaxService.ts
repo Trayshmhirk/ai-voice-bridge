@@ -5,11 +5,12 @@ dotenv.config();
 
 // Custom audio converter: MiniMax 16-bit PCM to Twilio 8-bit mu-law
 function pcm16ToMuLaw(pcm16Buffer: Buffer): Buffer {
-  const muLawBuffer = Buffer.alloc(pcm16Buffer.length / 2);
-  const VOLUME_BOOST = 2.0; // <--- This will make the AI louder on the handset
+  const muLawBuffer = Buffer.alloc(pcm16Buffer.length / 4); // Divided by 4 (2 bytes per sample, skipping every other)
+  const VOLUME_BOOST = 1.8;
 
   for (let i = 0; i < muLawBuffer.length; i++) {
-    let sample = pcm16Buffer.readInt16LE(i * 2);
+    // We skip 4 bytes (2 samples) to go from 16kHz to 8kHz
+    let sample = pcm16Buffer.readInt16LE(i * 4);
 
     // Apply digital gain (boost volume)
     sample = Math.round(sample * VOLUME_BOOST);
@@ -72,10 +73,10 @@ export function streamMiniMaxAudio(
           voice_id: "moss_audio_f2f64e31-0360-11f1-9cb8-d2836630c025",
           speed: 1.05, // Slightly faster feels more "human" and less muffled
           vol: 1.5, // Increase base volume from MiniMax side
-          pitch: 1, // A slight pitch increase (1) helps it stay "crisp" on 8kHz lines
+          pitch: 2, // A slight pitch increase (1) helps it stay "crisp" on 8kHz lines
         },
         audio_setting: {
-          sample_rate: 8000,
+          sample_rate: 16000,
           bitrate: 128000,
           format: "pcm",
           channel: 1,
