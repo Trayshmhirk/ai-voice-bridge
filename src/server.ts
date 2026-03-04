@@ -2,8 +2,8 @@ import Fastify from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import dotenv from "dotenv";
 import { createDeepgramConnection } from "./deepgramService";
-import { handleN8nLogic } from "./n8nService";
-import { streamMiniMaxAudio } from "./minimaxService";
+import { streamGeminiLogic } from "./geminiService";
+import { createMiniMaxStream } from "./minimaxService";
 
 dotenv.config();
 
@@ -58,28 +58,19 @@ fastify.register(async function (fastify) {
       const transcript = data.channel.alternatives[0].transcript;
       const isFinal = data.is_final;
 
-      if (transcript && isFinal) {
+      if (transcript && isFinal && streamSid) {
         fastify.log.info(`User said: ${transcript}`);
 
-        // 5. Send transcript to n8n to get the AI response
-        const aiResponseText = await handleN8nLogic(
-          transcript,
-          streamSid || "unknown_session",
-        );
+        // 1. Create the MiniMax audio pipe for this specific response
+        const minimaxStream = createMiniMaxStream(streamSid, connection as any);
 
-        // 👉 INJECTED LOGGING: See exactly what n8n returns
-        fastify.log.info(`[Brain] n8n returned: "${aiResponseText}"`);
+        // 2. Stream the text from Gemini directly into MiniMax
+        await streamGeminiLogic(transcript, streamSid, (chunkText) => {
+          minimaxStream.pushText(chunkText);
+        });
 
-        // 6. Send AI text to MiniMax only if we have actual text
-        if (streamSid) {
-          if (aiResponseText && aiResponseText.trim().length > 0) {
-            streamMiniMaxAudio(aiResponseText, streamSid, connection as any);
-          } else {
-            fastify.log.warn(
-              "[Voice] Skipped MiniMax because n8n returned empty text.",
-            );
-          }
-        }
+        // 3. Tell MiniMax we are done speaking
+        minimaxStream.finish();
       }
     });
 

@@ -14,7 +14,7 @@ function pcm16ToMuLaw(pcm16Buffer: Buffer): Buffer {
   // Each PCM16 sample = 2 bytes, so we step 4 bytes per output sample
   const outputLength = Math.floor(pcm16Buffer.length / 4);
   const muLawBuffer = Buffer.alloc(outputLength);
-  const VOLUME_BOOST = 1.5; // Moderate gain — avoids clipping on loud speech
+  const VOLUME_BOOST = 1.5;
 
   for (let i = 0; i < outputLength; i++) {
     // Average two adjacent 16kHz samples to produce one 8kHz sample
@@ -47,20 +47,18 @@ function pcm16ToMuLaw(pcm16Buffer: Buffer): Buffer {
   return muLawBuffer;
 }
 
-export function streamMiniMaxAudio(
-  aiText: string,
+// NEW EXPORT: Returns an object that lets us push chunks in real-time
+export function createMiniMaxStream(
   streamSid: string,
   twilioSocket: WebSocket,
 ) {
   const groupId = process.env.MINIMAX_GROUP_ID;
   const apiKey = process.env.MINIMAX_API_KEY;
 
-  if (!groupId || !apiKey) {
-    console.error("MiniMax credentials missing.");
-    return;
-  }
+  let isReady = false;
+  let isFinished = false;
+  let textQueue: string[] = [];
 
-  // 1. Open the connection to MiniMax
   const minimaxWs = new WebSocket(
     `wss://api.minimax.io/ws/v1/t2a_v2?GroupId=${groupId}`,
     {
@@ -81,8 +79,8 @@ export function streamMiniMaxAudio(
         voice_setting: {
           voice_id: "moss_audio_f2f64e31-0360-11f1-9cb8-d2836630c025",
           speed: 1.0,
-          vol: 1.2, // Slight boost on the source side
-          pitch: 0, // Neutral — let the voice sound natural
+          vol: 1.2,
+          pitch: 0,
         },
         audio_setting: {
           sample_rate: 16000, // Request 16kHz for proper downsampling to 8kHz
@@ -97,34 +95,21 @@ export function streamMiniMaxAudio(
   minimaxWs.on("message", (data: WebSocket.Data) => {
     const response = JSON.parse(data.toString());
 
-    // Log the exact events MiniMax is sending back to us
-    if (response.event !== "task_continued") {
-      console.log(`[MiniMax Event]: ${response.event}`);
-    }
-
     if (response.event === "task_started") {
-      // Once the server acknowledges the start, push the text and close the queue
-      minimaxWs.send(
-        JSON.stringify({
-          event: "task_continue",
-          text: aiText,
-        }),
-      );
-
-      minimaxWs.send(
-        JSON.stringify({
-          event: "task_finish",
-        }),
-      );
+      isReady = true;
+      // If Gemini thought of words before MiniMax was ready, send them now
+      while (textQueue.length > 0) {
+        minimaxWs.send(
+          JSON.stringify({ event: "task_continue", text: textQueue.shift() }),
+        );
+      }
+      if (isFinished) {
+        minimaxWs.send(JSON.stringify({ event: "task_finish" }));
+      }
     }
 
     if (response.event === "task_continued") {
-      if (
-        response.data &&
-        response.data.audio &&
-        response.data.audio.length > 0
-      ) {
-        // Convert MiniMax's HEX/Base64 audio string to a standard Buffer
+      if (response.data?.audio?.length > 0) {
         const isHex = /^[0-9A-Fa-f]+$/.test(response.data.audio);
         const pcmBuffer = isHex
           ? Buffer.from(response.data.audio, "hex")
@@ -133,7 +118,7 @@ export function streamMiniMaxAudio(
         // Use the new 16k -> 8k converter
         const muLawBuffer = pcm16ToMuLaw(pcmBuffer);
 
-        // Pipe it directly back to the active phone call
+        // Stream audio directly into Twilio's ear immediately
         twilioSocket.send(
           JSON.stringify({
             event: "media",
@@ -145,17 +130,24 @@ export function streamMiniMaxAudio(
         );
       }
     }
-
-    if (response.event === "task_failed") {
-      console.error("MiniMax Task Failed Details:", response);
-    }
   });
 
-  minimaxWs.on("error", (error) => {
-    console.error("MiniMax WebSocket error:", error);
-  });
-
-  minimaxWs.on("close", () => {
-    console.log("MiniMax stream finished.");
-  });
+  return {
+    pushText: (textChunk: string) => {
+      if (isReady) {
+        minimaxWs.send(
+          JSON.stringify({ event: "task_continue", text: textChunk }),
+        );
+      } else {
+        textQueue.push(textChunk);
+      }
+    },
+    finish: () => {
+      if (isReady) {
+        minimaxWs.send(JSON.stringify({ event: "task_finish" }));
+      } else {
+        isFinished = true; // Mark to finish once it connects
+      }
+    },
+  };
 }
