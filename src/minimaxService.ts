@@ -11,9 +11,9 @@ dotenv.config();
 function createMuLawConverter() {
   let previousSample = 0;
 
-  // THE SHARPNESS DIAL: 0.0 is off, 0.85 is extremely sharp/crisp.
-  // 0.75 is the sweet spot for making AI voices cut through phone compression.
-  const ALPHA = 0.75;
+  // THE SHARPNESS DIAL: 0.40 for a balanced treble boost
+  // Keeps the clarity but kills the metallic echo.
+  const ALPHA = 0.4;
   const VOLUME_BOOST = 1.5;
 
   return function pcm16ToMuLaw(pcm16Buffer: Buffer): Buffer {
