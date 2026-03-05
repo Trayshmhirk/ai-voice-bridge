@@ -4,43 +4,62 @@ import dotenv from "dotenv";
 dotenv.config();
 
 /**
- * PCM-16 (16kHz) to Twilio Mu-Law (8kHz) Converter
- * Downsamples by AVERAGING pairs of adjacent samples.
- * Prevents aliasing distortion and clipping.
+ * Creates a stateful audio converter.
+ * It remembers the "previousSample" across chunks to prevent static clicks,
+ * and applies a Pre-Emphasis filter to boost treble clarity over phone lines.
  */
-function pcm16ToMuLaw(pcm16Buffer: Buffer): Buffer {
-  const outputLength = Math.floor(pcm16Buffer.length / 4);
-  const muLawBuffer = Buffer.alloc(outputLength);
+function createMuLawConverter() {
+  let previousSample = 0;
+
+  // THE SHARPNESS DIAL: 0.0 is off, 0.85 is extremely sharp/crisp.
+  // 0.75 is the sweet spot for making AI voices cut through phone compression.
+  const ALPHA = 0.75;
   const VOLUME_BOOST = 1.5;
 
-  for (let i = 0; i < outputLength; i++) {
-    const sampleA = pcm16Buffer.readInt16LE(i * 4);
-    const sampleB = pcm16Buffer.readInt16LE(i * 4 + 2);
-    let sample = Math.round((sampleA + sampleB) / 2);
+  return function pcm16ToMuLaw(pcm16Buffer: Buffer): Buffer {
+    const outputLength = Math.floor(pcm16Buffer.length / 4);
+    const muLawBuffer = Buffer.alloc(outputLength);
 
-    sample = Math.round(sample * VOLUME_BOOST);
+    for (let i = 0; i < outputLength; i++) {
+      // 1. Downsample 16kHz to 8kHz by averaging
+      const sampleA = pcm16Buffer.readInt16LE(i * 4);
+      const sampleB = pcm16Buffer.readInt16LE(i * 4 + 2);
+      let currentSample = Math.round((sampleA + sampleB) / 2);
 
-    if (sample > 32767) sample = 32767;
-    else if (sample < -32768) sample = -32768;
+      // 2. Apply Pre-emphasis (Treble Boost) Formula
+      let filteredSample = currentSample - ALPHA * previousSample;
+      previousSample = currentSample; // Save for the next loop
 
-    let sign = (sample >> 8) & 0x80;
-    if (sign !== 0) sample = -sample;
+      // 3. Apply Digital Gain
+      let sample = Math.round(filteredSample * VOLUME_BOOST);
 
-    sample += 132;
-    if (sample > 32767) sample = 32767;
+      // 4. Clip to prevent distortion
+      if (sample > 32767) sample = 32767;
+      else if (sample < -32768) sample = -32768;
 
-    let exponent = 7;
-    for (let mask = 0x4000; (sample & mask) === 0 && exponent > 0; mask >>= 1) {
-      exponent--;
+      // 5. Mu-Law compression (ITU G.711)
+      let sign = (sample >> 8) & 0x80;
+      if (sign !== 0) sample = -sample;
+
+      sample += 132;
+      if (sample > 32767) sample = 32767;
+
+      let exponent = 7;
+      for (
+        let mask = 0x4000;
+        (sample & mask) === 0 && exponent > 0;
+        mask >>= 1
+      ) {
+        exponent--;
+      }
+
+      const mantissa = (sample >> (exponent + 3)) & 0x0f;
+      muLawBuffer[i] = ~(sign | (exponent << 4) | mantissa);
     }
-
-    const mantissa = (sample >> (exponent + 3)) & 0x0f;
-    muLawBuffer[i] = ~(sign | (exponent << 4) | mantissa);
-  }
-  return muLawBuffer;
+    return muLawBuffer;
+  };
 }
 
-// Opens a streaming pipe that accepts text chunks dynamically
 export function createMiniMaxStream(
   streamSid: string,
   twilioSocket: WebSocket,
@@ -51,6 +70,9 @@ export function createMiniMaxStream(
   let isReady = false;
   let isFinished = false;
   let textQueue: string[] = [];
+
+  // Initialize the converter for this specific phone call
+  const pcm16ToMuLaw = createMuLawConverter();
 
   const minimaxWs = new WebSocket(
     `wss://api.minimax.io/ws/v1/t2a_v2?GroupId=${groupId}`,
@@ -88,7 +110,6 @@ export function createMiniMaxStream(
 
     if (response.event === "task_started") {
       isReady = true;
-      // If Gemini passed full phrases before MiniMax connected, push them now
       while (textQueue.length > 0) {
         const chunk = textQueue.shift();
         if (chunk) {
@@ -109,9 +130,9 @@ export function createMiniMaxStream(
           ? Buffer.from(response.data.audio, "hex")
           : Buffer.from(response.data.audio, "base64");
 
+        // Convert the audio using our new Treble Boost function
         const muLawBuffer = pcm16ToMuLaw(pcmBuffer);
 
-        // Stream audio directly into Twilio's ear immediately
         twilioSocket.send(
           JSON.stringify({
             event: "media",
@@ -139,7 +160,7 @@ export function createMiniMaxStream(
       if (isReady) {
         minimaxWs.send(JSON.stringify({ event: "task_finish" }));
       } else {
-        isFinished = true; // Mark to finish once it connects
+        isFinished = true;
       }
     },
   };
