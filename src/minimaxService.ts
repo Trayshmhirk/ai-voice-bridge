@@ -5,31 +5,24 @@ dotenv.config();
 
 /**
  * PCM-16 (16kHz) to Twilio Mu-Law (8kHz) Converter
- * Downsamples by AVERAGING pairs of adjacent samples instead of skipping.
- * Averaging acts as a simple low-pass filter, preventing the aliasing
- * distortion (muffled/buzzy sound) caused by naive sample-skipping.
+ * Downsamples by AVERAGING pairs of adjacent samples.
+ * Prevents aliasing distortion and clipping.
  */
 function pcm16ToMuLaw(pcm16Buffer: Buffer): Buffer {
-  // Each output sample = average of 2 input samples (16kHz -> 8kHz)
-  // Each PCM16 sample = 2 bytes, so we step 4 bytes per output sample
   const outputLength = Math.floor(pcm16Buffer.length / 4);
   const muLawBuffer = Buffer.alloc(outputLength);
   const VOLUME_BOOST = 1.5;
 
   for (let i = 0; i < outputLength; i++) {
-    // Average two adjacent 16kHz samples to produce one 8kHz sample
     const sampleA = pcm16Buffer.readInt16LE(i * 4);
     const sampleB = pcm16Buffer.readInt16LE(i * 4 + 2);
     let sample = Math.round((sampleA + sampleB) / 2);
 
-    // Apply digital gain
     sample = Math.round(sample * VOLUME_BOOST);
 
-    // Clip to prevent distortion
     if (sample > 32767) sample = 32767;
     else if (sample < -32768) sample = -32768;
 
-    // Standard ITU G.711 Mu-Law compression
     let sign = (sample >> 8) & 0x80;
     if (sign !== 0) sample = -sample;
 
@@ -47,7 +40,7 @@ function pcm16ToMuLaw(pcm16Buffer: Buffer): Buffer {
   return muLawBuffer;
 }
 
-// NEW EXPORT: Returns an object that lets us push chunks in real-time
+// Opens a streaming pipe that accepts text chunks dynamically
 export function createMiniMaxStream(
   streamSid: string,
   twilioSocket: WebSocket,
@@ -70,8 +63,6 @@ export function createMiniMaxStream(
   );
 
   minimaxWs.on("open", () => {
-    console.log("Connected to MiniMax streaming API.");
-
     minimaxWs.send(
       JSON.stringify({
         event: "task_start",
@@ -83,7 +74,7 @@ export function createMiniMaxStream(
           pitch: 0,
         },
         audio_setting: {
-          sample_rate: 16000, // Request 16kHz for proper downsampling to 8kHz
+          sample_rate: 16000,
           bitrate: 128000,
           format: "pcm",
           channel: 1,
@@ -97,11 +88,14 @@ export function createMiniMaxStream(
 
     if (response.event === "task_started") {
       isReady = true;
-      // If Gemini thought of words before MiniMax was ready, send them now
+      // If Gemini passed full phrases before MiniMax connected, push them now
       while (textQueue.length > 0) {
-        minimaxWs.send(
-          JSON.stringify({ event: "task_continue", text: textQueue.shift() }),
-        );
+        const chunk = textQueue.shift();
+        if (chunk) {
+          minimaxWs.send(
+            JSON.stringify({ event: "task_continue", text: chunk }),
+          );
+        }
       }
       if (isFinished) {
         minimaxWs.send(JSON.stringify({ event: "task_finish" }));
@@ -115,7 +109,6 @@ export function createMiniMaxStream(
           ? Buffer.from(response.data.audio, "hex")
           : Buffer.from(response.data.audio, "base64");
 
-        // Use the new 16k -> 8k converter
         const muLawBuffer = pcm16ToMuLaw(pcmBuffer);
 
         // Stream audio directly into Twilio's ear immediately
